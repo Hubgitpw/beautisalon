@@ -368,7 +368,7 @@
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
 
         // --- Firebase Initialization ---
-        // Директна конфигурация за Firebase (заменете със своите данни)
+        // Директна конфигурация за Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyDdHa2fuk4NprrBDn-c4s0N5O-FdQIZSFI",
             authDomain: "beauty-saloon-sofia.firebaseapp.com",
@@ -378,34 +378,17 @@
             appId: "1:371535992409:web:6ca68dba4bd47a4a438348",
             measurementId: "G-J2HHVGH965"
         };
-        
-        const appId = "bookings"; // Използвайте просто име за колекцията
 
         let db, auth, analytics;
-        let isAuthenticated = false;
         try {
-            console.log("Инициализиране на Firebase с конфигурация:", firebaseConfig);
+            console.log("Инициализиране на Firebase...");
             const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
             db = getFirestore(app);
             analytics = getAnalytics(app);
             
-            // Първо проверка дали няма вече автентикиран потребител
-            if (auth.currentUser) {
-                console.log("Потребителят вече е автентикиран:", auth.currentUser.uid);
-                isAuthenticated = true;
-            } else {
-                // Опит за изключване на проверката за автентикация
-                try {
-                    // Настройка на Firestore да работи без автентикация за опростено използване
-                    // Това е временно решение, докато не се настроят правилните права
-                    console.log("Firebase инициализиран успешно без автентикация");
-                    isAuthenticated = true;
-                } catch (innerError) {
-                    console.error("Грешка при алтернативната инициализация:", innerError);
-                    // Продължаваме към следващото решение
-                }
-            }
+            // Работим без автентикация, така че правилата за Firestore
+            // трябва да позволяват публичен достъп до колекцията bookings
+            console.log("Firebase инициализиран успешно без изискване за автентикация");
         } catch (error) {
             console.error("Грешка при инициализиране на Firebase:", error.code, error.message);
             const bookingSection = document.getElementById('booking');
@@ -516,25 +499,40 @@
             // Продължаваме с изпращането, дори без автентикация
             console.log("Формата се изпраща...");
 
-            console.log("Form submission started. User authenticated with UID:", auth.currentUser.uid);
+            console.log("Започва изпращане на формата:", auth && auth.currentUser ? `Потребител с ID: ${auth.currentUser.uid}` : "Без автентикация");
 
             submitBtn.disabled = true;
             submitBtnText.textContent = 'Изпращане...';
             submitSpinner.classList.remove('hidden');
 
+            // Проверка за всички задължителни полета
+            const name = document.getElementById('name')?.value;
+            const phone = document.getElementById('phone')?.value;
+            const selectedCategory = serviceCategory?.value;
+            const bookingDate = document.getElementById('bookingDate')?.value;
+            
+            if (!name || !phone || !selectedCategory || !bookingDate) {
+                console.error("Липсват задължителни полета във формуляра");
+                showModal('Грешка при изпращане', 'Моля, попълнете всички задължителни полета (име, телефон, категория услуга и дата)');
+                submitBtn.disabled = false;
+                submitBtnText.textContent = 'Изпрати заявка';
+                submitSpinner.classList.add('hidden');
+                return;
+            }
+            
             const bookingData = {
-                name: document.getElementById('name').value,
-                phone: document.getElementById('phone').value,
-                email: document.getElementById('email').value,
-                serviceCategory: serviceCategory.value,
-                specificService: serviceSelect.value,
-                bookingDate: document.getElementById('bookingDate').value,
-                bookingTime: document.getElementById('bookingTime').value,
-                specialRequests: document.getElementById('specialRequests').value,
+                name: name,
+                phone: phone,
+                email: document.getElementById('email')?.value || '',
+                serviceCategory: selectedCategory,
+                specificService: serviceSelect?.value || '',
+                bookingDate: bookingDate,
+                bookingTime: document.getElementById('bookingTime')?.value || '',
+                specialRequests: document.getElementById('specialRequests')?.value || '',
                 status: 'pending', // Начален статус
                 createdAt: serverTimestamp(),
-                // Добавяме ID на потребителя само ако е автентикиран
-                ...(auth && auth.currentUser ? { userId: auth.currentUser.uid } : { guestId: Date.now().toString() })
+                clientTimestamp: new Date().toISOString(),
+                guestId: Date.now().toString() // Уникален идентификатор за проследяване
             };
 
             try {
@@ -542,16 +540,42 @@
                 
                 // Опростен път към колекцията за запазване на резервациите
                 const bookingsRef = collection(db, "bookings");
-                console.log("Записване в колекция:", bookingsRef.path);
+                console.log("Записване в колекция: bookings");
                 
-                const docRef = await addDoc(bookingsRef, bookingData);
-                console.log("УСПЕХ: Документът е записан с ID: ", docRef.id);
-                showModal('✅ Заявката е изпратена!', 'Благодарим Ви! Вашата заявка за резервация е получена успешно. Ще се свържем с Вас скоро за потвърждение.');
-                bookingForm.reset();
-                serviceCategory.dispatchEvent(new Event('change')); // Нулиране на зависимите полета
+                try {
+                    const docRef = await addDoc(bookingsRef, bookingData);
+                    console.log("УСПЕХ: Документът е записан с ID: ", docRef.id);
+                    showModal('✅ Заявката е изпратена!', 'Благодарим Ви! Вашата заявка за резервация е получена успешно. Ще се свържем с Вас скоро за потвърждение.');
+                    bookingForm.reset();
+                    if (serviceCategory) {
+                        serviceCategory.dispatchEvent(new Event('change')); // Нулиране на зависимите полета
+                    }
+                } catch (innerError) {
+                    console.error("ГРЕШКА ПРИ ЗАПИСВАНЕ:", innerError);
+                    throw innerError; // Препращаме грешката нагоре за обработка
+                }
             } catch (error) {
-                console.error("ГРЕШКА В FIRESTORE:", error.code, error.message);
-                showModal('❌ Грешка при изпращане', `Възникна проблем при изпращането на Вашата заявка. Грешка: ${error.message}. Код на грешката: ${error.code || 'неизвестен'}`);
+                console.error("ГРЕШКА В FIRESTORE:", error);
+                
+                // По-подробна диагностика
+                let errorMessage = 'Възникна неочаквана грешка при изпращането на заявката.';
+                let detailedError = '';
+                
+                if (error.code === 'permission-denied') {
+                    errorMessage = 'Нямате необходимите права за тази операция. Моля, проверете правилата за сигурност в Firebase.';
+                    detailedError = 'Трябва да промените правилата за сигурност във Firestore, за да позволите записи без автентикация.';
+                } else if (error.code === 'unavailable') {
+                    errorMessage = 'Услугата е временно недостъпна. Моля, проверете вашата интернет връзка.';
+                } else if (error.code === 'resource-exhausted') {
+                    errorMessage = 'Достигнат е лимитът на заявки към базата данни. Моля, опитайте отново по-късно.';
+                }
+                
+                showModal('❌ Грешка при изпращане', `${errorMessage}<br><br><small>${error.message || 'Няма допълнителна информация'}</small>`);
+                
+                // Записваме детайлна информация в конзолата за диагностика
+                if (detailedError) {
+                    console.error("ДЕТАЙЛНА ИНФОРМАЦИЯ:", detailedError);
+                }
             } finally {
                 submitBtn.disabled = false;
                 submitBtnText.textContent = 'Изпрати заявка';
